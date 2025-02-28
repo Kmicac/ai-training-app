@@ -40,6 +40,26 @@ model Exercise {
   videoUrl      String?
   instructions  String
   workoutPlan   WorkoutPlan @relation(fields: [workoutPlanId], references: [id])
+  videos        ExerciseVideo[]
+}
+
+model ExerciseVideo {
+  id          String    @id @default(uuid())
+  exerciseId  String
+  exercise    Exercise  @relation(fields: [exerciseId], references: [id])
+  youtubeId   String    @unique
+  title       String
+  description String    @db.Text
+  thumbnail   String
+  duration    String
+  views       Int       @default(0)
+  likes       Int       @default(0)
+  quality     Float     @default(0) // Score basado en vistas, likes y otros factores
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([exerciseId])
+  @@index([quality])
 }
 
 model NutritionPlan {

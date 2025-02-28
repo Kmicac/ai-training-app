@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { fitnessChain } from '../config/langchain.config.js';
-import youtube from '../config/youtube.config.js';
+import { videoService } from '../services/videoService.js';
 
 const prisma = new PrismaClient();
 
@@ -43,22 +43,39 @@ class WorkoutController {
     }
   }
 
-  async searchExerciseVideos(req, res) {
+  async getExerciseVideos(req, res) {
     try {
-      const { exerciseName } = req.params;
-      
-      const response = await youtube.search.list({
-        part: 'snippet',
-        q: `${exerciseName} exercise tutorial`,
-        type: 'video',
-        maxResults: 3,
-        videoEmbeddable: true
-      });
+      const { exerciseId } = req.params;
+      const { difficulty = 'intermedio', limit = 3 } = req.query;
 
-      res.json(response.data.items);
+      const videos = await videoService.findOrFetchVideos(
+        exerciseId,
+        difficulty,
+        parseInt(limit)
+      );
+
+      res.json(videos);
     } catch (error) {
-      console.error('Error buscando videos:', error);
-      res.status(500).json({ error: 'Error buscando videos de ejercicios' });
+      console.error('Error obteniendo videos:', error);
+      res.status(500).json({ error: 'Error obteniendo videos de ejercicios' });
+    }
+  }
+
+  async getRecommendedVideos(req, res) {
+    try {
+      const { userId } = req.params;
+      const { fitnessLevel, limit = 5 } = req.query;
+
+      const videos = await videoService.getRecommendedVideos(
+        userId,
+        fitnessLevel,
+        parseInt(limit)
+      );
+
+      res.json(videos);
+    } catch (error) {
+      console.error('Error obteniendo videos recomendados:', error);
+      res.status(500).json({ error: 'Error obteniendo videos recomendados' });
     }
   }
 }

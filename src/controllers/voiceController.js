@@ -1,19 +1,133 @@
 import { deepgramService } from '../config/deepgram.config.js';
-import { fitnessChain } from '../config/langchain.config.js';
+import { groqService } from '../config/groq.config.js';
 import { PrismaClient } from '@prisma/client';
+import { AudioBuffer } from '../utils/AudioBuffer.js';
+import { ReconnectionManager } from '../utils/ReconnectionManager.js';
+import { HeartbeatManager } from '../utils/HeartbeatManager.js';
 
 const prisma = new PrismaClient();
 
 class VoiceController {
   #deepgramStream = null;
-  #currentTranscript = '';
+  #audioBuffer;
+  #reconnectionManager;
+  #heartbeatManager;
   #isProcessing = false;
 
+  constructor() {
+    this.#audioBuffer = new AudioBuffer({
+      maxBufferSize: 50,
+      processInterval: 100
+    });
+
+    this.#reconnectionManager = new ReconnectionManager({
+      maxAttempts: 3,
+      delay: 2000
+    });
+
+    this.#heartbeatManager = new HeartbeatManager({
+      interval: 30000
+    });
+  }
+
+  async handleWebSocketConnection(socket) {
+    // Iniciar heartbeat
+    this.#heartbeatManager.start(socket, {
+      onConnectionLoss: async () => {
+        await this.#handleConnectionLoss(socket);
+      }
+    });
+
+    socket.on('startStream', async (data) => {
+      const { userId, language = 'es' } = data;
+      
+      try {
+        await this.#initializeStream(socket, userId, language);
+      } catch (error) {
+        await this.#reconnectionManager.handleReconnection(socket, userId, async () => {
+          await this.#initializeStream(socket, userId, language);
+        });
+      }
+    });
+
+    socket.on('audioChunk', (chunk) => {
+      if (this.#deepgramStream) {
+        this.#audioBuffer.addChunk(chunk);
+      }
+    });
+
+    socket.on('stopStream', () => {
+      this.#cleanup(socket);
+    });
+
+    socket.on('disconnect', () => {
+      this.#cleanup(socket);
+    });
+  }
+
+  async #initializeStream(socket, userId, language) {
+    this.#deepgramStream = deepgramService.createStreamingSTT({
+      language,
+      model: `nova-2-${language}`,
+      encoding: 'linear16',
+      sample_rate: 16000,
+      channels: 1,
+      interim_results: true,
+      endpointing: true,
+      utterance_end_ms: 1000
+    });
+
+    // Configurar el procesamiento del buffer
+    await this.#audioBuffer.startProcessing(this.#deepgramStream);
+
+    // Configurar manejadores de eventos
+    this.#setupEventHandlers(socket, userId);
+
+    socket.emit('streamReady');
+  }
+
+  #setupEventHandlers(socket, userId) {
+    this.#deepgramStream.addListener('transcriptReceived', 
+      async (transcription) => {
+        try {
+          await this.#processTranscription(socket, userId, transcription);
+        } catch (error) {
+          if (this.#reconnectionManager.shouldAttemptReconnection(error)) {
+            await this.#reconnectionManager.handleReconnection(socket, userId);
+          } else {
+            this.#handleError(socket, error);
+          }
+        }
+      });
+
+    this.#deepgramStream.addListener('error', async (error) => {
+      if (this.#reconnectionManager.shouldAttemptReconnection(error)) {
+        await this.#reconnectionManager.handleReconnection(socket, userId);
+      } else {
+        this.#handleError(socket, error);
+      }
+    });
+
+    this.#deepgramStream.addListener('metadata', 
+      (metadata) => socket.emit('metadata', metadata));
+
+    this.#deepgramStream.addListener('utterance_end', 
+      () => socket.emit('utteranceEnd'));
+  }
+
   async #processTranscription(socket, userId, transcription) {
-    const { transcript, is_final, confidence, words } = transcription;
+    const { transcript, is_final, confidence, words, sentiment, topics } = transcription;
 
     if (!is_final) {
-      socket.emit('interimTranscript', { transcript, words, confidence });
+      socket.emit('interimTranscript', { 
+        transcript, 
+        words, 
+        confidence,
+        metadata: {
+          sentiment,
+          topics
+        }
+      });
       return;
     }
 
@@ -21,22 +135,38 @@ class VoiceController {
     this.#isProcessing = true;
 
     try {
-      this.#currentTranscript = transcript;
-      const response = await this.processAIResponse(userId, transcript);
+      // Obtener contexto del usuario
+      const userContext = await this.#getUserContext(userId);
       
-      socket.emit('transcriptionComplete', {
-        transcript: this.#currentTranscript,
-        confidence,
-        words,
-        aiResponse: response
+      // Generar respuesta con Groq
+      const response = await groqService.generateResponse({
+        userContext: `Nivel de fitness: ${userContext.fitnessLevel}, Objetivos: ${userContext.fitnessGoals.join(', ')}`,
+        trainingHistory: userContext.workoutPlans[0] ? 
+          `Último plan: ${userContext.workoutPlans[0].name}` : 
+          'Sin historial previo',
+        conversationHistory: userContext.conversationHistory,
+        userInput: transcript
       });
 
+      socket.emit('transcriptionComplete', {
+        transcript,
+        confidence,
+        words,
+        aiResponse: response,
+        metadata: {
+          sentiment,
+          topics
+        }
+      });
+
+      // Generar audio con Deepgram TTS
       const ttsStream = await deepgramService.textToSpeech(
         response.text,
         {
           voice: 'nova',
           speed: 1.1,
-          model: 'enhanced'
+          model: 'enhanced',
+          language: 'es'
         }
       );
 
@@ -45,88 +175,52 @@ class VoiceController {
       }
 
       socket.emit('audioComplete');
+
+      // Guardar conversación
+      await this.#saveConversation(userId, transcript, response.text);
+
     } catch (error) {
-      console.error('Error procesando transcripción final:', error);
-      socket.emit('error', {
-        message: 'Error procesando respuesta',
-        details: error.message
-      });
+      this.#handleError(socket, error);
     } finally {
       this.#isProcessing = false;
     }
   }
 
-  handleWebSocketConnection(socket) {
-    socket.on('startStream', async (data) => {
-      const { userId, language = 'es' } = data;
-      
-      try {
-        this.#deepgramStream = deepgramService.createStreamingSTT({
-          language,
-          model: `nova-2-${language}`
-        });
+  async #handleConnectionLoss(socket) {
+    this.#audioBuffer.pause();
+    
+    const reconnected = await this.#reconnectionManager.handleReconnection(
+      socket, 
+      socket.userId
+    );
 
-        this.#deepgramStream.addListener('transcriptReceived', 
-          async (transcription) => this.#processTranscription(socket, userId, transcription));
+    if (reconnected) {
+      this.#audioBuffer.resume();
+    } else {
+      this.#cleanup(socket);
+    }
+  }
 
-        this.#deepgramStream.addListener('metadata', 
-          (metadata) => socket.emit('metadata', metadata));
-
-        this.#deepgramStream.addListener('utterance_end', 
-          () => socket.emit('utteranceEnd'));
-
-        this.#deepgramStream.addListener('error', (error) => {
-          console.error('Error en stream:', error);
-          socket.emit('error', {
-            message: 'Error en streaming',
-            details: error.message
-          });
-        });
-
-        socket.emit('streamReady');
-
-      } catch (error) {
-        console.error('Error iniciando stream:', error);
-        socket.emit('error', {
-          message: 'Error iniciando stream',
-          details: error.message
-        });
-      }
-    });
-
-    socket.on('audioChunk', (chunk) => {
-      try {
-        if (this.#deepgramStream) {
-          deepgramService.handleAudioChunk(this.#deepgramStream, chunk);
-        }
-      } catch (error) {
-        console.error('Error procesando chunk de audio:', error);
-        socket.emit('error', {
-          message: 'Error procesando audio',
-          details: error.message
-        });
-      }
-    });
-
-    socket.on('stopStream', () => {
-      if (this.#deepgramStream) {
-        deepgramService.closeStream(this.#deepgramStream);
-        this.#deepgramStream = null;
-        this.#isProcessing = false;
-      }
-    });
-
-    socket.on('disconnect', () => {
-      if (this.#deepgramStream) {
-        deepgramService.closeStream(this.#deepgramStream);
-        this.#deepgramStream = null;
-        this.#isProcessing = false;
-      }
+  #handleError(socket, error) {
+    console.error('Error en VoiceController:', error);
+    socket.emit('error', {
+      message: 'Error en el procesamiento de voz',
+      details: error.message
     });
   }
 
-  async processAIResponse(userId, transcript) {
-    const userContext = await prisma.user.findUnique({
+  #cleanup(socket) {
+    this.#audioBuffer.clear();
+    this.#heartbeatManager.stop();
+    if (this.#deepgramStream) {
+      deepgramService.closeStream(this.#deepgramStream);
+      this.#deepgramStream = null;
+    }
+    this.#isProcessing = false;
+  }
+
+  async #getUserContext(userId) {
+    const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         workoutPlans: {
@@ -141,43 +235,40 @@ class VoiceController {
       }
     });
 
-    if (!userContext) {
+    if (!user) {
       throw new Error('Usuario no encontrado');
     }
 
-    const conversationHistory = userContext.conversations
+    const conversationHistory = user.conversations
       .flatMap(conv => conv.messages)
       .map(msg => `${msg.role}: ${msg.content}`)
       .join('\n');
 
-    const aiResponse = await fitnessChain.call({
-      userContext: `Nivel de fitness: ${userContext.fitnessLevel}, Objetivos: ${userContext.fitnessGoals.join(', ')}`,
-      trainingHistory: userContext.workoutPlans[0] ? 
-        `Último plan: ${userContext.workoutPlans[0].name}` : 
-        'Sin historial previo',
-      userInput: transcript,
+    return {
+      ...user,
       conversationHistory
-    });
+    };
+  }
 
+  async #saveConversation(userId, userMessage, assistantMessage) {
     await prisma.conversation.create({
       data: {
         userId,
         messages: {
           create: [
-            { content: transcript, role: 'user' },
-            { content: aiResponse.text, role: 'assistant' }
+            { content: userMessage, role: 'user' },
+            { content: assistantMessage, role: 'assistant' }
           ]
         }
       }
     });
-
-    return aiResponse;
   }
 
   async processVoiceInteraction(req, res) {
     try {
       const { audioData, userId, language = 'es' } = req.body;
       
+      // Procesar audio con Deepgram STT
       const sttResult = await deepgramService.speechToText(
         Buffer.from(audioData, 'base64'),
         { 
@@ -187,15 +278,32 @@ class VoiceController {
         }
       );
 
-      const aiResponse = await this.processAIResponse(userId, sttResult.transcript);
+      // Obtener contexto del usuario
+      const userContext = await this.#getUserContext(userId);
+
+      // Generar respuesta con Groq
+      const aiResponse = await groqService.generateResponse({
+        userContext: `Nivel de fitness: ${userContext.fitnessLevel}, Objetivos: ${userContext.fitnessGoals.join(', ')}`,
+        trainingHistory: userContext.workoutPlans[0] ? 
+          `Último plan: ${userContext.workoutPlans[0].name}` : 
+          'Sin historial previo',
+        conversationHistory: userContext.conversationHistory,
+        userInput: sttResult.transcript
+      });
+
+      // Generar audio con Deepgram TTS
       const audioResponse = await deepgramService.textToSpeech(
         aiResponse.text,
         { 
           voice: 'nova',
           language,
-          model: 'enhanced'
+          model: 'enhanced',
+          speed: 1.1
         }
       );
+
+      // Guardar conversación
+      await this.#saveConversation(userId, sttResult.transcript, aiResponse.text);
 
       res.json({
         success: true,

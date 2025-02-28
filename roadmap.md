@@ -26,7 +26,7 @@ Based on your requirements for an AI-powered fitness application that processes 
 ### AI & External Services
 - **Language Models**: OpenAI, Groq
 - **Speech-to-Text**: Deepgram
-- **Text-to-Speech**: Groq API
+- **Text-to-Speech**: Deepgram
 - **Video Content**: YouTube Data API
 - **Nutrition Data**: Perplexity API
 
@@ -71,19 +71,89 @@ Based on your requirements for an AI-powered fitness application that processes 
 - Implement embedding generation for video content
 - Create summarization tools for distilling valuable information
 
-### 4. Voice Interaction Implementation
+### 4. Implementación de Interacción por Voz
 
-#### 4.1 Speech-to-Text with Deepgram
-- Set up backend routes for voice input processing
-- Configure Deepgram API client with appropriate models
-- Implement audio preprocessing for optimal transcription
-- Create error handling for speech recognition edge cases
+#### 4.1 Integración de Deepgram para STT y TTS
+- Configuración del cliente Deepgram con nova-2-es para español
+- Implementación de streaming bidireccional para audio en tiempo real
+- Configuración de opciones avanzadas:
+  ```javascript
+  {
+    model: 'nova-2-es',
+    language: 'es',
+    smart_format: true,
+    punctuate: true,
+    utterances: true,
+    diarize: true,
+    filler_words: true,
+    summarize: true
+  }
+  ```
+- Desarrollo de pipeline de procesamiento de audio:
+  - Grabación de audio del cliente (Web Audio API)
+  - Streaming de chunks de audio a Deepgram
+  - Manejo de transcripciones intermedias y finales
+  - Control de estado de procesamiento
 
-#### 4.2 Text-to-Speech with Groq
-- Build TTS pipeline with Groq's API
-- Implement voice customization options (pace, tone)
-- Set up audio compression and delivery optimization
-- Create audio caching system to reduce API calls
+#### 4.2 Integración de Groq como LLM
+- Configuración del cliente Groq compatible con OpenAI:
+  ```javascript
+  const llm = new OpenAI({
+    baseURL: "https://api.groq.com/openai/v1",
+    apiKey: process.env.GROQ_API_KEY,
+    modelName: "llama-3.3-70b-versatile"
+  });
+  ```
+- Implementación de cadenas de procesamiento:
+  - Análisis de contexto del usuario
+  - Generación de respuestas personalizadas
+  - Integración con el historial de conversación
+  - Manejo de metadatos y estado de la sesión
+
+#### 4.3 Sistema de Procesamiento de Voz
+- Implementación de WebSocket para comunicación en tiempo real:
+  - Manejo de eventos de conexión/desconexión
+  - Control de estado de la sesión
+  - Buffer de audio y control de flujo
+- Desarrollo de pipeline de procesamiento:
+  1. Captura de audio (cliente)
+  2. Streaming a Deepgram STT
+  3. Procesamiento con Groq LLM
+  4. Generación de respuesta con Deepgram TTS
+  5. Streaming de audio al cliente
+
+#### 4.4 Características Avanzadas
+- Análisis de Voz:
+  - Detección automática de final de utterances
+  - Identificación de palabras de relleno
+  - Análisis de sentimiento en tiempo real
+  - Detección y clasificación de tópicos
+- Mejoras en la Calidad de Voz:
+  - Optimización de la voz nova para español
+  - Control dinámico de velocidad y tono
+  - Configuración de alta calidad (24kHz)
+  - Modelo enhanced para TTS
+- Sistema de Retroalimentación:
+  - Indicadores visuales de estado
+  - Métricas de calidad de transcripción
+  - Análisis de latencia y rendimiento
+  - Logs detallados para debugging
+
+#### 4.5 Optimización y Monitoreo
+- Implementación de caché:
+  - Almacenamiento de transcripciones frecuentes
+  - Caché de respuestas del LLM
+  - Buffer de audio para TTS
+- Sistema de Monitoreo:
+  - Métricas de uso de API
+  - Latencia de procesamiento
+  - Calidad de transcripción
+  - Tasa de error de palabra
+- Manejo de Errores:
+  - Reconexión automática de WebSocket
+  - Reintentos inteligentes
+  - Fallbacks para componentes críticos
+  - Notificaciones de error al usuario
 
 ### 5. Frontend Development
 
