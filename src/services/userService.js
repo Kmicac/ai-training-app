@@ -1,5 +1,5 @@
-const { supabase, supabaseAdmin } = require('../config/supabase');
-const jwt = require('jsonwebtoken');
+import { supabase, supabaseAdmin } from '../config/supabase';
+import { sign } from 'jsonwebtoken';
 
 // Clase para manejar operaciones de usuario con Supabase
 class UserService {
@@ -147,7 +147,7 @@ class UserService {
    * Genera un token JWT (para uso con middleware personalizado si es necesario)
    */
   generateToken(user) {
-    return jwt.sign(
+    return sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRE }
@@ -155,4 +155,4 @@ class UserService {
   }
 }
 
-module.exports = new UserService();
+export default new UserService();
