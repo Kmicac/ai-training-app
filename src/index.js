@@ -1,95 +1,66 @@
-import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
-import { createServer } from 'node:http';
+import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { PrismaClient } from '@prisma/client';
-import { createClient } from 'redis';
-import app from './app.js';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
+import dotenv from 'dotenv';
 
+import testRoutes from './routes/test.routes.js';
+import { workoutController } from './controllers/workoutController.js';
+import { voiceController } from './controllers/voiceController.js';
+
+// Configuración de variables de entorno
+dotenv.config();
+
+// Inicialización de Express
+const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? process.env.FRONTEND_URL 
-      : 'http://localhost:3000',
+    origin: process.env.CORS_ORIGIN,
     methods: ['GET', 'POST']
   }
 });
 
-// Singleton instances
-const prisma = new PrismaClient();
-const redisClient = createClient({
-  url: process.env.REDIS_URL
+// Middleware de seguridad
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN
+}));
+app.use(morgan('dev'));
+app.use(express.json({ limit: '50mb' }));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: process.env.RATE_LIMIT_WINDOW * 60 * 1000,
+  max: process.env.RATE_LIMIT_MAX_REQUESTS
 });
+app.use(limiter);
 
-// Graceful shutdown handler
-async function shutdown(signal) {
-  console.log(`\n${signal} signal received. Starting graceful shutdown...`);
-  
-  try {
-    // Close HTTP server (stop accepting new connections)
-    await new Promise((resolve) => httpServer.close(resolve));
-    console.log('✅ HTTP server closed');
+// Rutas de prueba
+app.use('/api/test', testRoutes);
 
-    // Close WebSocket connections
-    await io.close();
-    console.log('✅ WebSocket server closed');
+// Rutas de la API
+app.post('/api/workout/generate', workoutController.generateWorkoutPlan);
+app.get('/api/workout/videos/:exerciseId', workoutController.getExerciseVideos);
+app.get('/api/workout/recommended/:userId', workoutController.getRecommendedVideos);
 
-    // Disconnect Redis
-    await redisClient.quit();
-    console.log('✅ Redis disconnected');
-
-    // Disconnect Prisma
-    await prisma.$disconnect();
-    console.log('✅ Database disconnected');
-
-    process.exit(0);
-  } catch (error) {
-    console.error('Error during shutdown:', error);
-    process.exit(1);
-  }
-}
-
-// Handle shutdown signals
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-// Handle uncaught errors
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  shutdown('UNCAUGHT_EXCEPTION');
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  shutdown('UNHANDLED_REJECTION');
-});
-
-// Initialize WebSocket connection
+// Manejo de WebSocket para voz
 io.on('connection', (socket) => {
-  console.log('👤 Client connected');
-  
-  socket.on('disconnect', () => {
-    console.log('👋 Client disconnected');
-  });
+  console.log('Cliente conectado:', socket.id);
+  voiceController.handleWebSocketConnection(socket);
 });
 
-// Start server
+// Manejo de errores
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
+// Iniciar servidor
 const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, async () => {
-  try {
-    // Connect to Redis
-    await redisClient.connect();
-    console.log('✅ Redis connected');
-
-    // Test database connection
-    await prisma.$connect();
-    console.log('✅ Database connected');
-
-    console.log(`🚀 Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
-  } catch (error) {
-    console.error('Error during startup:', error);
-    await shutdown('STARTUP_ERROR');
-  }
+httpServer.listen(PORT, () => {
+  console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
 }); 

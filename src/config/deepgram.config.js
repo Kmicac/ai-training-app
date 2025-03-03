@@ -1,20 +1,26 @@
-import { Deepgram } from '@deepgram/sdk';
+import { createClient } from '@deepgram/sdk';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 class DeepgramService {
   #client;
   #defaultOptions;
 
   constructor() {
-    this.#client = new Deepgram(process.env.DEEPGRAM_API_KEY);
+    if (!process.env.DEEPGRAM_API_KEY) {
+      throw new Error('DEEPGRAM_API_KEY no encontrada en el archivo .env');
+    }
+
+    this.#client = createClient(process.env.DEEPGRAM_API_KEY);
+
     this.#defaultOptions = {
-      model: 'nova-2-es',  // Modelo optimizado para español
+      model: 'nova-2',
       language: 'es',
       smart_format: true,
       punctuate: true,
       utterances: true,
-      diarize: true,
-      filler_words: true,
-      summarize: true
+      diarize: true
     };
   }
 
@@ -36,16 +42,16 @@ class DeepgramService {
         utterance_end_ms: 1000
       });
 
-      // Configurar manejadores de eventos
-      deepgramLive.on('error', error => 
-        this.#handleError(error, 'streaming STT'));
-
-      deepgramLive.on('metadata', metadata => {
-        console.log('Metadata recibida:', metadata);
+      deepgramLive.addListener('transcriptReceived', (transcription) => {
+        console.log('Transcripción recibida:', transcription);
       });
 
-      deepgramLive.on('utterance_end', () => {
-        console.log('Fin de utterance detectado');
+      deepgramLive.addListener('error', (error) => {
+        console.error('Error en streaming:', error);
+      });
+
+      deepgramLive.addListener('close', () => {
+        console.log('Conexión cerrada');
       });
 
       return deepgramLive;
@@ -56,22 +62,25 @@ class DeepgramService {
 
   async speechToText(audioBuffer, options = {}) {
     try {
-      const response = await this.#client.listen.prerecorded({
+      const source = {
         buffer: audioBuffer,
-        mimetype: options.mimetype ?? 'audio/wav',
+        mimetype: options.mimetype || 'audio/wav'
+      };
+
+      const { result, error } = await this.#client.transcription.preRecorded(source, {
         ...this.#defaultOptions,
         ...options
       });
 
-      // Extraer información relevante de la respuesta
+      if (error) {
+        throw error;
+      }
+
       return {
-        transcript: response.results.channels[0].alternatives[0].transcript,
-        confidence: response.results.channels[0].alternatives[0].confidence,
-        words: response.results.channels[0].alternatives[0].words,
-        utterances: response.results.utterances ?? [],
-        summary: response.results.summary ?? null,
-        topics: response.results.topics ?? [],
-        sentiment: response.results.sentiment ?? null
+        transcript: result?.results?.channels[0]?.alternatives[0]?.transcript || '',
+        confidence: result?.results?.channels[0]?.alternatives[0]?.confidence || 0,
+        words: result?.results?.channels[0]?.alternatives[0]?.words || [],
+        utterances: result?.results?.utterances || []
       };
     } catch (error) {
       return this.#handleError(error, 'STT');
@@ -80,28 +89,26 @@ class DeepgramService {
 
   async textToSpeech(text, options = {}) {
     try {
-      // Configuración para TTS
-      const ttsOptions = {
+      const { result, error } = await this.#client.speak({
         text,
-        voice: options.voice ?? 'nova', // Voz más natural
-        model: options.model ?? 'enhanced',
-        language: options.language ?? 'es',
-        speed: options.speed ?? 1.0,
-        pitch: options.pitch ?? 1.0,
-        encoding: 'wav',
-        sample_rate: 24000,
-        streaming: true
-      };
+        voice: options.voice || 'nova',
+        model: options.model || 'enhanced',
+        language: options.language || 'es'
+      });
 
-      return await this.#client.speak(ttsOptions);
+      if (error) {
+        throw error;
+      }
+
+      return result;
     } catch (error) {
       return this.#handleError(error, 'TTS');
     }
   }
 
   handleAudioChunk(stream, chunk) {
-    if (!stream?.send) {
-      throw new Error('Stream inválido o no inicializado');
+    if (!stream) {
+      throw new Error('Stream no inicializado');
     }
 
     try {
@@ -112,9 +119,7 @@ class DeepgramService {
   }
 
   closeStream(stream) {
-    if (!stream?.finish) {
-      return;
-    }
+    if (!stream) return;
 
     try {
       stream.finish();

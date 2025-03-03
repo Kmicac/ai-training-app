@@ -1,8 +1,8 @@
 {
-  "name": "ai-fitness-assistant-backend",
+  "name": "ai-fitness-assistant",
   "version": "1.0.0",
-  "description": "Backend for AI-powered fitness assistant",
   "type": "module",
+  "description": "AI-powered fitness assistant with video recommendations",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
@@ -11,20 +11,22 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^3.1.4",
-    "@langchain/openai": "^0.0.14",
-    "@prisma/client": "^5.10.0",
+    "@langchain/core": "^0.1.48",
+    "@langchain/groq": "^0.0.3",
+    "@supabase/supabase-js": "^2.39.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
-    "langchain": "^0.1.21",
-    "socket.io": "^4.7.4",
-    "redis": "^4.6.13",
-    "youtube-api-v3-search": "^1.2.1",
-    "prisma": "^5.10.0",
-    "googleapis": "^133.0.0"
+    "express-rate-limit": "^7.1.5",
+    "googleapis": "^133.0.0",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "socket.io": "^4.7.4"
   },
   "devDependencies": {
-    "@types/node": "^20.11.24"
+    "@types/node": "^20.11.24",
+    "eslint": "^8.57.0",
+    "nodemon": "^3.1.0"
   },
   "engines": {
     "node": ">=22.14.0"

@@ -1,11 +1,9 @@
 import { deepgramService } from '../config/deepgram.config.js';
 import { groqService } from '../config/groq.config.js';
-import { PrismaClient } from '@prisma/client';
+import { supabaseService } from '../config/supabase.config.js';
 import { AudioBuffer } from '../utils/AudioBuffer.js';
 import { ReconnectionManager } from '../utils/ReconnectionManager.js';
 import { HeartbeatManager } from '../utils/HeartbeatManager.js';
-
-const prisma = new PrismaClient();
 
 class VoiceController {
   #deepgramStream = null;
@@ -220,22 +218,9 @@ class VoiceController {
   }
 
   async #getUserContext(userId) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        workoutPlans: {
-          take: 1,
-          orderBy: { createdAt: 'desc' }
-        },
-        conversations: {
-          take: 5,
-          orderBy: { createdAt: 'desc' },
-          include: { messages: true }
-        }
-      }
-    });
+    const { data: user, error } = await supabaseService.getUserContext(userId);
 
-    if (!user) {
+    if (error || !user) {
       throw new Error('Usuario no encontrado');
     }
 
@@ -251,17 +236,7 @@ class VoiceController {
   }
 
   async #saveConversation(userId, userMessage, assistantMessage) {
-    await prisma.conversation.create({
-      data: {
-        userId,
-        messages: {
-          create: [
-            { content: userMessage, role: 'user' },
-            { content: assistantMessage, role: 'assistant' }
-          ]
-        }
-      }
-    });
+    await supabaseService.saveConversation(userId, userMessage, assistantMessage);
   }
 
   async processVoiceInteraction(req, res) {

@@ -1,6 +1,14 @@
-import { ChatGroq } from 'langchain/chat_models/groq';
-import { PromptTemplate } from 'langchain/prompts';
-import { LLMChain } from 'langchain/chains';
+import dotenv from 'dotenv';
+import { ChatGroq } from '@langchain/groq';
+import { PromptTemplate } from '@langchain/core/prompts';
+import { RunnableSequence } from '@langchain/core/runnables';
+
+// Cargar variables de entorno
+dotenv.config();
+
+if (!process.env.GROQ_API_KEY) {
+  throw new Error('GROQ_API_KEY no encontrada en el archivo .env');
+}
 
 const chatModel = new ChatGroq({
   apiKey: process.env.GROQ_API_KEY,
@@ -26,10 +34,10 @@ const fitnessAssistantPrompt = new PromptTemplate({
   inputVariables: ['userContext', 'trainingHistory', 'userInput'],
 });
 
-const fitnessChain = new LLMChain({
-  llm: chatModel,
-  prompt: fitnessAssistantPrompt,
-});
+const fitnessChain = RunnableSequence.from([
+  fitnessAssistantPrompt,
+  chatModel
+]);
 
 export {
   chatModel,

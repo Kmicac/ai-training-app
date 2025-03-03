@@ -101,7 +101,7 @@ Based on your requirements for an AI-powered fitness application that processes 
   const llm = new OpenAI({
     baseURL: "https://api.groq.com/openai/v1",
     apiKey: process.env.GROQ_API_KEY,
-    modelName: "llama-3.3-70b-versatile"
+    modelName: "llama-3.2-11b-vision-preview"
   });
   ```
 - Implementación de cadenas de procesamiento:

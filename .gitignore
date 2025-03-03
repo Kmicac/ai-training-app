@@ -1,14 +1,16 @@
 # Dependencies
 node_modules
-package-lock.json
-yarn.lock
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
 
 # Environment
 .env
 .env.local
-.env.development
-.env.test
-.env.production
+.env.*.local
 
 # Logs
 logs
@@ -16,6 +18,19 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Runtime data
 pids
@@ -31,8 +46,5 @@ dist
 build
 
 # Misc
-.DS_Store
-.idea
-.vscode
 *.swp
 *.swo

@@ -12,7 +12,7 @@ class GroqService {
     this.#llm = new OpenAI({
       baseURL: 'https://api.groq.com/openai/v1',
       apiKey: process.env.GROQ_API_KEY,
-      modelName: 'llama-3.3-70b-versatile',
+      modelName: 'llama-3.2-11b-vision-preview',
       temperature: 0.7,
       streaming: true
     });
@@ -53,7 +53,7 @@ class GroqService {
       return {
         text: response,
         metadata: {
-          model: 'llama-3.3-70b-versatile',
+          model: 'llama-3.2-11b-vision-preview',
           type: 'fitness_response'
         }
       };
